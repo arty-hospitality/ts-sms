@@ -1,0 +1,93 @@
+TenantSage Governance Control Plane (ts_sms)
+
+Version: 1.0 (FROZEN)
+Classification: STRICT ISOLATION / SECURE ENCLAVE
+
+The ts_sms module is the immutable core of the TenantSage architecture. It is completely decoupled from the application logic, UI, and RAG pipelines. It acts as the sole arbiter of authority, enforcing the Dual-Hierarchy (Organizational + Data) constraints, evaluating the Evidence Enforcement Boundary (EEB), and maintaining the cryptographic provenance ledger.
+
+Directory Structure
+
+ts_sms/
+├── .seal                           # Cryptographic signature of the frozen TS-SMS release
+├── README.md                       # Operator manual and ARB rulings
+│
+├── formal_methods/                 # The mathematical source of truth
+│   ├── tla/
+│   │   ├── authoritycontrolplatform.tla # Operator ruling: unconditional safety, explicit availability
+│   │   ├── allowderivedcanonical.tla    # Provenance integrity, canonical derivation
+│   │   ├── TenantSageStateMachine.tla   # TS-SMS v1.0 S0-S12 transition definitions
+│   │   └── TenantSageStateMachine.cfg   # Liveness and Invariant checks
+│   └── alloy/
+│       └── ALLOY_MODEL.als              # Structural contract integrity & DPS Law 29 (Fail-Closed)
+│
+├── contracts/                      # Frozen IPC boundaries (Protobuf/JSON Schemas)
+│   ├── TS-CONTRACT-001_AuthorityRequest.proto
+│   ├── TS-CONTRACT-002_GovernanceContext.proto
+│   ├── TS-CONTRACT-004_EEB.proto        
+│   ├── TS-CONTRACT-005_ProvenanceEnvelope.proto
+│   └── TS-CONTRACT-011_FailureResponse.proto
+│
+├── state_machine/                  # Enforces the 12-state transition architecture
+│   ├── __init__.py
+│   ├── engine.py                   # The deterministic transition executor (S0 -> S12)
+│   ├── states.py                   # S1 (Auth) -> S3 (EEB) -> S6 (CGL) -> S12 (Ledger Commit)
+│   └── transitions.py              # Transition guards preventing out-of-order execution
+│
+├── laws/                           # Hard-coded TS-SMS constitutional laws
+│   ├── __init__.py
+│   ├── law_10_authority_precedes.py # Enforces authority resolution before vector search
+│   ├── law_29_fail_closed.py        # Destroys context and triggers SF_AUTH/SF_GOV on any failure
+│   └── lattice_precedence.py        # Resolves Human Gate Evaluate (Admin vs Manager conflicts)
+│
+├── dar/                            # Dual-Authority Resolver
+│   ├── __init__.py
+│   ├── resolver.py                 # Core DAR execution engine
+│   ├── org_scope.py                # Tenant -> Family -> Child hierarchy resolution
+│   ├── data_scope.py               # Document Collection classification & retention constraints
+│   └── assignment_validator.py     # ReBAC time-bounded user assignment validation
+│
+├── eeb/                            # Evidence Enforcement Boundary
+│   ├── __init__.py
+│   ├── builder.py                  # Synthesizes Org Scope + Data Scope into deterministic filters
+│   ├── constraints.py              # Legal hold and classification enforcement
+│   └── boundary_validator.py       # Ensures no evidence resides outside the computed EEB
+│
+├── rvl/                            # Response Validation Layer
+│   ├── __init__.py
+│   ├── validator.py                # Post-generation compliance and structural checks
+│   └── ghost_effect_monitor.py     # Prevents unauthorized data from leaking via LLM latent memory
+│
+├── ledger/                         # Cryptographic Append-Only Evidence Ledger
+│   ├── __init__.py
+│   ├── chain.py                    # Appends entries (State S11 -> S12)
+│   ├── H_prev.py                   # Parent hash pointer logic (provenance lineage)
+│   ├── node.py                     # Ledger record definition
+│   └── auditor.py                  # Verifies continuous ledger atomicity and monotonic authority
+│
+├── crypto/                         # Core cryptographic primitives
+│   ├── __init__.py
+│   ├── canonical_serialization.py  # Strict ordering for hashing inputs (prevents collision attacks)
+│   └── hash_derivation.py          # Derives Authority Scope Hash and Governance Context Hash
+│
+└── interface/                      # The ONLY way the App communicates with the Control Plane
+    ├── __init__.py
+    ├── gateway.py                  # The `tenantsage.resolve()` entrypoint
+    └── exceptions.py               # TS-CONTRACT-011 mappings
+
+
+The execution paradigm
+
+When the standard RAG application makes a call:
+result = tenantsage_gateway.execute(user_id, query)
+
+The App is locked out: The app pauses. It has no access to the vector DB or LLM yet.
+
+State Machine takes over: The state_machine/engine.py initializes at S1.
+
+DAR calculates scope: dar/resolver.py computes the intersection of organizational relationships and data classification.
+
+EEB is constructed: eeb/builder.py produces the executable query boundary.
+
+Ledger tracks execution: ledger/chain.py binds the H_prev hash to the EEB_Hash, tracking provenance before generation even begins.
+
+Boundary handed back: Only then does the interface/gateway.py return the restricted execution environment to the app to perform the neural ranking, strictly confined within the EEB.
