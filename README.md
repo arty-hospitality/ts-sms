@@ -27,6 +27,24 @@ linking cryptographic hashes across all stages of the pipeline.Fail-Closed (Law 
 or failure at any state in the pipeline physically destroys the execution context and triggers a formal failure state (SF_AUTH, SF_EEB, etc.), 
 returning a NULL_HASH for provenance.
 
+## RAG Data Hierarchy: rag_fact
+The data hierarchy is `family → parent → children → assignment → rag_source → rag_chunk → rag_fact`.
+
+`rag_fact` is an optional structured fact record that enables precise key-based lookups
+(e.g. "What is the supervisor threshold?") so retrieval does not rely solely on semantic similarity.
+Facts supplement, and never replace, chunk/semantic retrieval; the absence of facts never fails the flow.
+
+Each fact carries only identity, linkage and lookup fields:
+`rag_fact_id`, `rag_source_id` (pointer to its mother `rag_source`),
+`fact_type` (`threshold`, `time_standard`, `role_policy`, `override_rule`, `glossary`), `key`, and a JSON `value`.
+
+Like `rag_chunk`, a `rag_fact` carries lineage, not independent permission state. Its eligibility and governance
+(`effective_from`/`effective_to`, role visibility, retention, RBAC confirmed in the ledger) are inherited from its
+parent `rag_source`. If the parent source is ineligible or cannot be resolved, the fact is DENY (fail-closed).
+Fact-level governance fields from the legacy Family/Child schema (`visibility`, `effective_from`/`effective_to`,
+`family_id`/`child_id`) are not authoritative. The EEB confines facts by membership in the set of eligible
+`rag_source` ids, and the fact→source linkage is bound into the governance `context_hash`.
+
 Formal VerificationThe logic within ts_sms is backed by rigorous formal methods (see the formal_methods/ directory):
 TLA+ (authoritycontrolplatform.tla, allowderivedcanonical.tla): 
 Proves behavioral properties, such as the unconditional safety of the state machine, strict ledger append ordering, 
