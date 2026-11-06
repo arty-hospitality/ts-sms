@@ -1,14 +1,18 @@
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 from temporalio.exceptions import ApplicationError
 from datetime import timedelta
 import logging
 
-# Import activities (omitted for brevity, but they wrap the DAR/EEB/Ledger modules)
+# Activities wrap the DAR/EEB/Ledger modules
 with workflow.unsafe.imports_passed_through():
     from ts_sms.dar.resolver import resolve_dual_authority
     from ts_sms.eeb.builder import build_evidence_boundary
     from ts_sms.ledger.chain import commit_to_ledger
     from ts_sms.laws.law_29_fail_closed import enforce_fail_closed
+
+# Bounded retries so an activity failure reaches Law 29 instead of retrying forever.
+ACTIVITY_RETRY_POLICY = RetryPolicy(maximum_attempts=3)
 
 @workflow.defn
 class TenantSageStateMachine:
@@ -29,6 +33,7 @@ class TenantSageStateMachine:
                 resolve_dual_authority,
                 authority_request,
                 start_to_close_timeout=timedelta(seconds=5),
+                retry_policy=ACTIVITY_RETRY_POLICY,
             )
             
             if auth_context["effect"] == "DENY":
@@ -40,6 +45,7 @@ class TenantSageStateMachine:
                 build_evidence_boundary,
                 auth_context,
                 start_to_close_timeout=timedelta(seconds=5),
+                retry_policy=ACTIVITY_RETRY_POLICY,
             )
 
             # STATE S6: Context Governance Layer (CGL) / Prompt Inspection
@@ -52,6 +58,7 @@ class TenantSageStateMachine:
                 commit_to_ledger,
                 {"request": authority_request, "eeb": eeb, "auth_context": auth_context},
                 start_to_close_timeout=timedelta(seconds=10),
+                retry_policy=ACTIVITY_RETRY_POLICY,
             )
             state = "S12"
 

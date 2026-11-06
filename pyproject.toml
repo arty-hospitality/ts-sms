@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ts-sms"
+version = "1.0.0"
+description = "TenantSage Governance Control Plane: Temporal-backed S0->S12 authority state machine"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "temporalio==1.33.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==8.3.5",
+    "pytest-asyncio==0.26.0",
+]
+
+[project.scripts]
+ts-sms-worker = "ts_sms.worker:main"
+ts-sms-execute = "ts_sms.interface.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["ts_sms*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]

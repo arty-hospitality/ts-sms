@@ -1,0 +1,65 @@
+services:
+  postgresql:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: temporal
+      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:-temporal}
+    volumes:
+      - temporal-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U temporal"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  temporal:
+    image: temporalio/auto-setup:1.29.7
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:-temporal}
+      POSTGRES_SEEDS: postgresql
+      DEFAULT_NAMESPACE: ${TS_SMS_TEMPORAL_NAMESPACE:-default}
+    ports:
+      - "7233:7233"
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator namespace describe -n ${TS_SMS_TEMPORAL_NAMESPACE:-default} --address $$(hostname -i):7233"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 10s
+    restart: unless-stopped
+
+  temporal-ui:
+    image: temporalio/ui:2.56.0
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  worker:
+    build: .
+    image: ts-sms-worker:latest
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      TS_SMS_TEMPORAL_ADDRESS: temporal:7233
+      TS_SMS_TEMPORAL_NAMESPACE: ${TS_SMS_TEMPORAL_NAMESPACE:-default}
+      TS_SMS_TASK_QUEUE: ${TS_SMS_TASK_QUEUE:-ts-sms-governance-queue}
+      TS_SMS_LOG_LEVEL: ${TS_SMS_LOG_LEVEL:-INFO}
+    volumes:
+      - ts-sms-ledger:/var/lib/ts-sms
+    restart: unless-stopped
+
+volumes:
+  temporal-db:
+  ts-sms-ledger:
