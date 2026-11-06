@@ -1,4 +1,5 @@
 from temporalio import workflow
+from temporalio.common import RetryPolicy
 from temporalio.exceptions import ApplicationError
 from datetime import timedelta
 import logging
@@ -38,8 +39,10 @@ class TenantSageStateMachine:
             state = "S3"
             eeb = await workflow.execute_activity(
                 build_evidence_boundary,
-                auth_context,
+                args=[auth_context, authority_request.get("fact_lookup")],
                 start_to_close_timeout=timedelta(seconds=5),
+                # An invalid fact_lookup is deterministic: fail closed (SF_EEB) instead of retrying.
+                retry_policy=RetryPolicy(non_retryable_error_types=["ValueError"]),
             )
 
             # STATE S6: Context Governance Layer (CGL) / Prompt Inspection
