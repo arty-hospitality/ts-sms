@@ -44,6 +44,12 @@ parent `rag_source`. If the parent source is ineligible or cannot be resolved, t
 Fact-level governance fields from the legacy Family/Child schema (`visibility`, `effective_from`/`effective_to`,
 `family_id`/`child_id`) are not authoritative. The EEB confines facts by membership in the set of eligible
 `rag_source` ids, and the fact→source linkage is bound into the governance `context_hash`.
+A source is eligible only if it passes the temporal window, role visibility, RBAC-in-ledger and retention checks,
+is not under legal hold, and matches the resolved classification.
+Filter contract: the top-level `must`/`must_not` of `eeb["filters"]` bound the document/chunk index, while
+`eeb["filters"]["rag_fact"]["must"]` is the complete, self-contained boundary that retrieval adapters apply to fact searches.
+Applications request a precise lookup via the optional `fact_lookup` argument of `TenantSageGateway.execute`
+(`fact_type` and/or `key`), which the workflow passes to the EEB builder and which is covered by `eeb_hash`.
 
 Formal VerificationThe logic within ts_sms is backed by rigorous formal methods (see the formal_methods/ directory):
 TLA+ (authoritycontrolplatform.tla, allowderivedcanonical.tla): 
@@ -88,6 +94,14 @@ result = await gateway.execute(
     user_id="user_123",
     tenant_id="tenant_A",
     query="Summarize the Q3 financial reports."
+)
+
+# Optional precise rag_fact lookup (supplements chunk retrieval; confined to eligible rag_source ids)
+result = await gateway.execute(
+    user_id="user_123",
+    tenant_id="tenant_A",
+    query="What is the supervisor threshold?",
+    fact_lookup={"fact_type": "threshold", "key": "supervisor_limit"}
 )
 
 if result["status"] == "ALLOW":

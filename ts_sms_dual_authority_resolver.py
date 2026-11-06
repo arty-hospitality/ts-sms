@@ -47,8 +47,9 @@ def _resolve_data_scope(org_scope: dict, request: Dict[str, Any]) -> dict:
     as_of = request.get("timestamp")
     role = org_scope.get("role")
 
+    classification = "CONFIDENTIAL"
     source_effects = {
-        source["rag_source_id"]: _rag_source_effect(source, role, as_of)
+        source["rag_source_id"]: _rag_source_effect(source, role, as_of, classification)
         for source in _load_rag_sources(org_scope)
         if source.get("rag_source_id") is not None
     }
@@ -65,7 +66,7 @@ def _resolve_data_scope(org_scope: dict, request: Dict[str, Any]) -> dict:
     rag_facts.sort(key=lambda f: (str(f["rag_source_id"]), f["fact_type"], str(f["key"]), str(f["rag_fact_id"])))
 
     return {
-        "classification": "CONFIDENTIAL",
+        "classification": classification,
         "retention_status": "ACTIVE",
         "eligible_rag_source_ids": eligible_rag_source_ids,
         "rag_facts": rag_facts,
@@ -79,17 +80,23 @@ def _load_rag_facts(org_scope: dict) -> List[dict]:
     # Stub: optional rag_fact records linked to rag_source via source_id.
     return []
 
-def _rag_source_effect(source: dict, role: Optional[str], as_of: Any) -> str:
+def _rag_source_effect(source: dict, role: Optional[str], as_of: Any, classification: str) -> str:
     """Source-level governance decision; any missing or failing attribute is DENY (fail-closed)."""
     try:
         if as_of is None or role is None:
+            return "DENY"
+        # Mirror the EEB document constraints so facts never outlive what document filters exclude.
+        if source.get("legal_hold") is not False:
+            return "DENY"
+        if source.get("classification") != classification:
             return "DENY"
         if source.get("rbac_ledger_confirmed") is not True:
             return "DENY"
         if role not in (source.get("visible_roles") or ()):
             return "DENY"
         effective_from = source["effective_from"]
-        effective_to = source.get("effective_to")
+        # effective_to must be declared; an explicit None means open-ended (still bounded by retention_expiry).
+        effective_to = source["effective_to"]
         if as_of < effective_from or (effective_to is not None and as_of >= effective_to):
             return "DENY"
         # retention_expiry is derived from the source's 5-year / 7-year retention class.
@@ -110,9 +117,11 @@ def _to_rag_fact(record: dict) -> Optional[dict]:
     Projects a rag_fact record onto identity/linkage/lookup fields only.
     Fact-level effective_from/effective_to/visibility/retention (and legacy
     family_id/child_id) are intentionally dropped: governance derives from rag_source.
+    Accepts the documented rag_fact_id/rag_source_id names, falling back to legacy id/source_id;
+    conflicting values are rejected.
     """
-    fact_id = record.get("id")
-    source_id = record.get("source_id")
+    fact_id = _canonical_field(record, "rag_fact_id", "id")
+    source_id = _canonical_field(record, "rag_source_id", "source_id")
     fact_type = record.get("fact_type")
     key = record.get("key")
     if fact_id is None or source_id is None or key is None or fact_type not in RAG_FACT_TYPES:
@@ -128,6 +137,13 @@ def _to_rag_fact(record: dict) -> Optional[dict]:
         "key": key,
         "value": value,
     }
+
+def _canonical_field(record: dict, name: str, legacy_name: str) -> Any:
+    value = record.get(name)
+    legacy = record.get(legacy_name)
+    if value is not None and legacy is not None and value != legacy:
+        return None
+    return value if value is not None else legacy
 
 def _rag_lineage_digest(data_scope: dict) -> str:
     lineage = {

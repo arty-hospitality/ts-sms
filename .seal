@@ -52,6 +52,7 @@ ts_sms/
 │   ├── __init__.py
 │   ├── builder.py                  # Synthesizes Org Scope + Data Scope into deterministic filters;
 │   │                               #   rag_fact confined by eligible mother rag_source ids (+ optional key/fact_type lookup)
+│   │                               #   filters["rag_fact"] is the self-contained fact-index boundary; top-level must/must_not bound docs/chunks
 │   ├── constraints.py              # Legal hold and classification enforcement (source-level; rag_fact has
 │   │                               #   no self-governance and inherits these constraints from its rag_source)
 │   └── boundary_validator.py       # Ensures no evidence resides outside the computed EEB
