@@ -78,3 +78,113 @@ if result["status"] == "ALLOW":
 else:
     # Handle formal failure state (e.g., result["failure_state"] == "SF_AUTH")
     pass
+
+## Running the Service
+
+The control plane ships as the `ts_sms` Python package plus a Temporal worker
+(`ts-sms-worker`) that hosts the `TenantSageStateMachine` workflow and its
+activities (`resolve_dual_authority`, `build_evidence_boundary`,
+`commit_to_ledger`) on the `ts-sms-governance-queue` task queue.
+
+```
+ts_sms/
+├── config.py                 # Environment-driven settings + Temporal client factory
+├── worker.py                 # ts-sms-worker entrypoint
+├── interface/gateway.py      # TenantSageGateway.execute()
+├── interface/cli.py          # ts-sms-execute (submit one request from the shell)
+├── state_machine/engine.py   # TenantSageStateMachine workflow (S0 -> S12)
+├── dar/resolver.py           # resolve_dual_authority activity (S1)
+├── eeb/builder.py            # build_evidence_boundary activity (S3)
+├── ledger/chain.py           # commit_to_ledger activity + ProvenanceChain (S11 -> S12)
+├── ledger/auditor.py         # verify_chain (H_prev linkage / hash integrity)
+├── laws/law_29_fail_closed.py
+└── crypto/                   # canonical serialization + SHA-256 derivation
+```
+
+### Install
+
+```bash
+pip install .            # runtime (pins temporalio)
+pip install -e '.[dev]'  # + pytest
+pytest                   # unit tests + workflow tests on Temporal's in-process test server
+```
+
+### Configuration
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `TS_SMS_TEMPORAL_ADDRESS` | `localhost:7233` | Temporal frontend `host:port` (gateway + worker) |
+| `TS_SMS_TEMPORAL_NAMESPACE` | `default` | Temporal namespace |
+| `TS_SMS_TASK_QUEUE` | `ts-sms-governance-queue` | Task queue the worker polls and the gateway targets |
+| `TS_SMS_TEMPORAL_TLS` | `false` | Enable server-auth TLS (implied when an API key is set) |
+| `TS_SMS_TEMPORAL_TLS_CLIENT_CERT` / `TS_SMS_TEMPORAL_TLS_CLIENT_KEY` | unset | Paths to an mTLS client cert/key (e.g. Temporal Cloud mTLS) |
+| `TS_SMS_TEMPORAL_API_KEY` | unset | Temporal Cloud API key |
+| `TS_SMS_LEDGER_PATH` | `ts_sms_ledger.jsonl` (`/var/lib/ts-sms/ledger.jsonl` in Docker) | Append-only provenance ledger file (worker only) |
+| `TS_SMS_WORKFLOW_TIMEOUT_SECONDS` | `60` | Gateway-side workflow execution timeout; on expiry the gateway returns `SF_GOV` |
+| `TS_SMS_LOG_LEVEL` | `INFO` | Worker log level |
+
+`TenantSageGateway(temporal_target=...)` still accepts an explicit address, which overrides `TS_SMS_TEMPORAL_ADDRESS`.
+
+### Run locally with Docker Compose
+
+```bash
+docker compose up -d --build     # Postgres + Temporal (auto-setup) + Temporal UI + ts-sms worker
+docker compose logs -f worker    # wait for "TS-SMS worker polling task queue ..."
+```
+
+Temporal is exposed on `localhost:7233` and the Temporal UI on http://localhost:8080.
+The ledger lives in the `ts-sms-ledger` volume.
+
+### Run the worker without Docker
+
+```bash
+export TS_SMS_TEMPORAL_ADDRESS=localhost:7233
+ts-sms-worker                    # or: python -m ts_sms.worker
+```
+
+On startup the worker writes the Genesis Snapshot if the ledger is empty (Law 25),
+verifies the whole chain, and refuses to start if the ledger has been tampered with.
+It shuts down gracefully on `SIGTERM`/`SIGINT`.
+
+### Submit a request
+
+From the shell:
+
+```bash
+ts-sms-execute --user-id user_123 --tenant-id tenant_A --query "Summarize the Q3 financial reports."
+# inside compose:
+docker compose run --rm worker ts-sms-execute --user-id user_123 --tenant-id tenant_A --query "..."
+```
+
+From the application:
+
+```python
+import asyncio
+from ts_sms.interface.gateway import TenantSageGateway
+
+async def main():
+    gateway = TenantSageGateway()  # reads TS_SMS_* env vars
+    result = await gateway.execute(user_id="user_123", tenant_id="tenant_A", query="Summarize Q3.")
+    print(result["status"], result.get("provenance", {}).get("provenance_hash"))
+
+asyncio.run(main())
+```
+
+An `ALLOW` result carries `eeb` (filters + `eeb_hash`) and `provenance`
+(`ledger_index`, `h_prev`, `provenance_hash`, ...). Any failure returns a
+TS-CONTRACT-011 `DENY` with `failure_state` (`SF_AUTH`, `SF_EEB`, `SF_LEDGER`, `SF_GOV`)
+and `NULL_HASH` provenance. Activities retry at most 3 times before Law 29 fires.
+
+### Deploy to production
+
+1. Build and push the image: `docker build -t <registry>/ts-sms-worker:<tag> . && docker push ...`
+2. Point it at your Temporal cluster (self-hosted or Temporal Cloud) with
+   `TS_SMS_TEMPORAL_ADDRESS`, `TS_SMS_TEMPORAL_NAMESPACE` and either
+   `TS_SMS_TEMPORAL_API_KEY` or the mTLS cert/key variables.
+3. Mount a persistent volume at `/var/lib/ts-sms` for the ledger.
+4. The bundled `docker-compose.yml` can also be used for a single-host deployment;
+   set `TEMPORAL_DB_PASSWORD` and avoid publishing ports 7233/8080 publicly.
+
+The file ledger uses `flock`, so several worker processes may share it on one host/volume.
+It does not support workers on different hosts writing the same chain; for horizontal
+scale-out, back `ProvenanceChain` with a shared transactional store.
