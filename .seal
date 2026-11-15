@@ -1,3 +1,8 @@
+STATUS (v1.0 runtime): this file describes the TARGET layout of the frozen release.
+It contains no cryptographic signature, and formal_methods/, contracts/, rvl/ and the
+other modules listed below that are absent from the ts_sms/ package are not yet
+implemented. See README.md, "Implementation Status", for what actually ships.
+
 TenantSage Governance Control Plane (ts_sms)
 
 Version: 1.0 (FROZEN)
@@ -8,7 +13,7 @@ The ts_sms module is the immutable core of the TenantSage architecture. It is co
 Directory Structure
 
 ts_sms/
-├── .seal                           # Cryptographic signature of the frozen TS-SMS release
+├── .seal                           # (planned) cryptographic signature of the frozen release; none yet
 ├── README.md                       # Operator manual and ARB rulings
 │
 ├── formal_methods/                 # The mathematical source of truth
@@ -46,6 +51,7 @@ ts_sms/
 │   ├── data_scope.py               # Document Collection classification & retention constraints;
 │   │                               #   optional rag_fact records (fact_type/key/value) for precise lookups,
 │   │                               #   linked to a mother rag_source, no self-governance (inherits from source)
+│   ├── rag_store.py                # rag_source governance + rag_fact lineage (implemented data_scope source)
 │   └── assignment_validator.py     # ReBAC time-bounded user assignment validation
 │
 ├── eeb/                            # Evidence Enforcement Boundary
