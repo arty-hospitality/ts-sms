@@ -11,6 +11,7 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
     "temporalio==1.33.0",
+    "cryptography==46.0.7",
 ]
 
 [project.optional-dependencies]
