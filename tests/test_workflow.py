@@ -158,3 +158,19 @@ async def test_payload_encryption_hides_identifiers_from_history(settings, monke
                 raw = await env.client.get_workflow_handle(wf_id).fetch_history()
     assert "dXNlcl8xMjM" not in raw.to_json()  # base64("user_123")
     assert "user_123" not in raw.to_json()
+
+
+async def test_fact_lookup_reaches_eeb_and_invalid_lookup_fails_closed(settings):
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        with ThreadPoolExecutor() as executor:
+            async with build_worker(env.client, settings, executor):
+                gateway = _gateway(settings, env.client)
+
+                allow = await gateway.execute("user_123", "tenant_A", "Supervisor threshold?",
+                                              fact_lookup={"fact_type": "threshold", "key": "supervisor_limit"})
+                assert allow["status"] == "ALLOW", allow
+                assert allow["eeb"]["filters"]["rag_fact"]["must"][1:] == [
+                    {"term": {"fact_type": "threshold"}}, {"term": {"key": "supervisor_limit"}}]
+
+                deny = await gateway.execute("user_123", "tenant_A", "q", fact_lookup={"fact_type": "opinion"})
+                assert deny["status"] == "DENY" and deny["failure_state"] == "SF_EEB"

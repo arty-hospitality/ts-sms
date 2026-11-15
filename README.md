@@ -27,12 +27,41 @@ linking cryptographic hashes across all stages of the pipeline.Fail-Closed (Law 
 or failure at any state in the pipeline physically destroys the execution context and triggers a formal failure state (SF_AUTH, SF_EEB, etc.), 
 returning a NULL_HASH for provenance.
 
+## RAG Data Hierarchy: rag_fact
+The data hierarchy is `family → parent → children → assignment → rag_source → rag_chunk → rag_fact`.
+
+`rag_fact` is an optional structured fact record that enables precise key-based lookups
+(e.g. "What is the supervisor threshold?") so retrieval does not rely solely on semantic similarity.
+Facts supplement, and never replace, chunk/semantic retrieval; the absence of facts never fails the flow.
+
+Each fact carries only identity, linkage and lookup fields:
+`rag_fact_id`, `rag_source_id` (pointer to its mother `rag_source`),
+`fact_type` (`threshold`, `time_standard`, `role_policy`, `override_rule`, `glossary`), `key`, and a JSON `value`.
+
+Like `rag_chunk`, a `rag_fact` carries lineage, not independent permission state. Its eligibility and governance
+(`effective_from`/`effective_to`, role visibility, retention, RBAC confirmed in the ledger) are inherited from its
+parent `rag_source`. If the parent source is ineligible or cannot be resolved, the fact is DENY (fail-closed).
+Fact-level governance fields from the legacy Family/Child schema (`visibility`, `effective_from`/`effective_to`,
+`family_id`/`child_id`) are not authoritative. The EEB confines facts by membership in the set of eligible
+`rag_source` ids, and the fact→source linkage is bound into the governance `context_hash`.
+A source is eligible only if it passes the temporal window, role visibility, RBAC-in-ledger and retention checks,
+is not under legal hold, matches the resolved classification, and belongs to the assignment's `tenant_id` and `org_node_id`.
+Filter contract: the top-level `must`/`must_not` of `eeb["filters"]` bound the document/chunk index, while
+`eeb["filters"]["rag_fact"]["must"]` is the complete, self-contained boundary that retrieval adapters apply to fact searches.
+`ts_sms/retrieval/fact_index.py` is the OpenSearch/Elasticsearch adapter for that boundary; its integration test runs with
+`pip install -e '.[dev,integration]'` and `REQUIRE_OPENSEARCH=1 OPENSEARCH_URL=http://localhost:9200 pytest -m integration`.
+Sources and facts are loaded from the JSON store named by `TS_SMS_RAG_STORE_PATH` (see `ts_sms/dar/rag_store.py`);
+with no store configured there are no sources or facts and the flow is unaffected.
+Applications request a precise lookup via the optional `fact_lookup` argument of `TenantSageGateway.execute`
+(`fact_type` and/or `key`), which the workflow passes to the EEB builder and which is covered by `eeb_hash`.
+
 ## Implementation Status (v1.0 runtime in this repository)
 
 | Component | Status |
 |---|---|
 | S0 -> S1 -> S3 -> S11/S12 workflow, Law 29 fail-closed, Law 25 genesis | Implemented |
 | DAR (S1) | Implemented against a JSON assignment store (see *Assignment store*); fails closed when the store is missing, malformed, or holds no unique active assignment. Not yet a full ReBAC service. |
+| rag_source / rag_fact data scope | Implemented against an optional JSON RAG store (`TS_SMS_RAG_STORE_PATH`); facts inherit eligibility from their source. `rag_chunk` lineage is not yet modeled. |
 | Ledger | Implemented: ALLOW and DENY entries, optional HMAC keying |
 | S6 Context Governance Layer (CGL) | **Not implemented** (pass-through state); no prompt-inspection policy is defined or enforced |
 | Response Validation Layer (RVL) | **Not implemented** |
@@ -77,6 +106,14 @@ result = await gateway.execute(
     user_id="user_123",
     tenant_id="tenant_A",
     query="Summarize the Q3 financial reports."
+)
+
+# Optional precise rag_fact lookup (supplements chunk retrieval; confined to eligible rag_source ids)
+result = await gateway.execute(
+    user_id="user_123",
+    tenant_id="tenant_A",
+    query="What is the supervisor threshold?",
+    fact_lookup={"fact_type": "threshold", "key": "supervisor_limit"}
 )
 
 if result["status"] == "ALLOW":
@@ -129,6 +166,7 @@ pytest                   # unit tests + workflow tests on Temporal's in-process 
 | `TS_SMS_TEMPORAL_TLS_CLIENT_CERT` / `TS_SMS_TEMPORAL_TLS_CLIENT_KEY` | unset | Paths to an mTLS client cert/key (e.g. Temporal Cloud mTLS) |
 | `TS_SMS_TEMPORAL_API_KEY` | unset | Temporal Cloud API key |
 | `TS_SMS_ASSIGNMENTS_PATH` | unset (**every request is denied**) | JSON assignment store read by the DAR (worker only) |
+| `TS_SMS_RAG_STORE_PATH` | unset (no rag_source / rag_fact records) | Optional JSON RAG store (`rag_sources`, `rag_facts`) read by the DAR (worker only) |
 | `TS_SMS_LEDGER_HMAC_KEY` | unset | Key ledger entry hashes with HMAC-SHA256; a keyed worker refuses an unkeyed ledger (worker only) |
 | `TS_SMS_DIGEST_KEY` | unset | HMAC key for the query digest (gateway) and principal digest (worker); without it plain SHA-256 is used, which a dictionary attack can invert for short queries |
 | `TS_SMS_PAYLOAD_KEY` | unset | Base64 32-byte AES-256-GCM key; encrypts every Temporal payload. Gateway and worker must use the same key |

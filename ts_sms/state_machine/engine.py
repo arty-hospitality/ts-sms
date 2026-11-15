@@ -15,11 +15,11 @@ with workflow.unsafe.imports_passed_through():
 ACTIVITY_RETRY_POLICY = RetryPolicy(
     maximum_attempts=3,
     non_retryable_error_types=[
-        "ValueError", "KeyError", "TypeError", "AssignmentStoreError", "LedgerIntegrityError",
+        "ValueError", "KeyError", "TypeError", "AssignmentStoreError", "RagStoreError", "LedgerIntegrityError",
     ],
 )
 
-_REQUEST_FIELDS = ("user_id", "tenant_id", "query_hash")
+_REQUEST_FIELDS = ("user_id", "tenant_id", "query_hash", "fact_lookup")
 
 
 class AuthorityDenied(Exception):
@@ -59,7 +59,7 @@ class TenantSageStateMachine:
             state = "S3"
             eeb = await workflow.execute_activity(
                 build_evidence_boundary,
-                auth_context,
+                args=[auth_context, request.get("fact_lookup")],
                 start_to_close_timeout=timedelta(seconds=5),
                 retry_policy=ACTIVITY_RETRY_POLICY,
             )

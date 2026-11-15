@@ -30,11 +30,20 @@ class TenantSageGateway:
             self._client = await connect_client(self.settings, target=self.temporal_target)
         return self._client
 
-    async def execute(self, user_id: str, tenant_id: str, query: str) -> Dict[str, Any]:
+    async def execute(
+        self,
+        user_id: str,
+        tenant_id: str,
+        query: str,
+        fact_lookup: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
         """
         Submits the execution request to the TS-SMS Temporal State Machine.
         The application is locked out until the state machine reaches S12 (Ledger Commit)
         or hits a Failure State (SF_AUTH, SF_GOV, etc.).
+
+        fact_lookup: optional precise rag_fact lookup, e.g. {"fact_type": "threshold", "key": "supervisor_limit"}.
+        It narrows rag_fact retrieval within the EEB and supplements, never replaces, chunk retrieval.
         """
         # TS-CONTRACT-001: AuthorityRequest. The raw query never enters Temporal;
         # the evaluation time is set by the workflow, not the caller.
@@ -43,6 +52,8 @@ class TenantSageGateway:
             "tenant_id": tenant_id,
             "query_hash": keyed_digest(str(query), self.settings.digest_key),
         }
+        if fact_lookup is not None:
+            authority_request["fact_lookup"] = fact_lookup
 
         try:
             client = await self._get_client()

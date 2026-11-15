@@ -56,6 +56,9 @@ class Settings:
     assignments_path: Optional[str] = field(
         default_factory=lambda: _env_optional("TS_SMS_ASSIGNMENTS_PATH")
     )
+    rag_store_path: Optional[str] = field(
+        default_factory=lambda: _env_optional("TS_SMS_RAG_STORE_PATH")
+    )
     ledger_hmac_key: Optional[str] = field(
         default_factory=lambda: _env_optional("TS_SMS_LEDGER_HMAC_KEY"), repr=False
     )

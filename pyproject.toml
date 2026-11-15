@@ -19,6 +19,9 @@ dev = [
     "pytest==8.3.5",
     "pytest-asyncio==0.26.0",
 ]
+integration = [
+    "opensearch-py==2.7.1",
+]
 
 [project.scripts]
 ts-sms-worker = "ts_sms.worker:main"
@@ -31,3 +34,4 @@ include = ["ts_sms*"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
+markers = ["integration: requires a running OpenSearch at OPENSEARCH_URL"]
