@@ -53,6 +53,31 @@ class Settings:
         )
     )
     log_level: str = field(default_factory=lambda: os.environ.get("TS_SMS_LOG_LEVEL", "INFO"))
+    assignments_path: Optional[str] = field(
+        default_factory=lambda: _env_optional("TS_SMS_ASSIGNMENTS_PATH")
+    )
+    ledger_hmac_key: Optional[str] = field(
+        default_factory=lambda: _env_optional("TS_SMS_LEDGER_HMAC_KEY"), repr=False
+    )
+    digest_key: Optional[str] = field(
+        default_factory=lambda: _env_optional("TS_SMS_DIGEST_KEY"), repr=False
+    )
+    payload_key: Optional[str] = field(
+        default_factory=lambda: _env_optional("TS_SMS_PAYLOAD_KEY"), repr=False
+    )
+
+
+def data_converter(settings: Settings):
+    """Default converter, or one that AES-GCM encrypts every payload when TS_SMS_PAYLOAD_KEY is set."""
+    import dataclasses
+
+    from temporalio.converter import DataConverter
+
+    if not settings.payload_key:
+        return DataConverter.default
+    from ts_sms.crypto.payload_codec import EncryptionCodec
+
+    return dataclasses.replace(DataConverter.default, payload_codec=EncryptionCodec.from_b64(settings.payload_key))
 
 
 async def connect_client(settings: Settings, target: Optional[str] = None):
@@ -75,4 +100,5 @@ async def connect_client(settings: Settings, target: Optional[str] = None):
         namespace=settings.temporal_namespace,
         tls=tls,
         api_key=settings.temporal_api_key,
+        data_converter=data_converter(settings),
     )

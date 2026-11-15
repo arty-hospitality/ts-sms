@@ -9,16 +9,15 @@ from typing import Optional
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from ts_sms.activities import GovernanceActivities
 from ts_sms.config import Settings, connect_client
-from ts_sms.dar.resolver import resolve_dual_authority
 from ts_sms.eeb.builder import build_evidence_boundary
 from ts_sms.ledger.auditor import verify_chain
-from ts_sms.ledger.chain import commit_to_ledger, get_chain
+from ts_sms.ledger.chain import get_chain
 from ts_sms.state_machine.engine import TenantSageStateMachine
 
 logger = logging.getLogger("ts_sms.worker")
 
-ACTIVITIES = [resolve_dual_authority, build_evidence_boundary, commit_to_ledger]
 WORKFLOWS = [TenantSageStateMachine]
 
 
@@ -26,8 +25,10 @@ def bootstrap_ledger(settings: Settings) -> None:
     """Law 25: write the Genesis Snapshot if absent, then refuse to start on a corrupted ledger."""
     chain = get_chain(settings)
     chain.ensure_genesis()
-    count = verify_chain(chain.entries())
-    logger.info("Ledger %s verified (%d entries)", settings.ledger_path, count)
+    count = verify_chain(chain.entries(), settings.ledger_hmac_key)
+    logger.info("Ledger %s verified (%d entries, %s)", settings.ledger_path, count, chain.alg)
+    if not settings.assignments_path:
+        logger.warning("TS_SMS_ASSIGNMENTS_PATH is unset: every request will be denied (fail-closed)")
 
 
 async def connect_with_retry(settings: Settings, attempts: int = 30, delay: float = 2.0) -> Client:
@@ -44,11 +45,17 @@ async def connect_with_retry(settings: Settings, attempts: int = 30, delay: floa
 
 
 def build_worker(client: Client, settings: Settings, executor: ThreadPoolExecutor) -> Worker:
+    governance = GovernanceActivities(settings)
     return Worker(
         client,
         task_queue=settings.task_queue,
         workflows=WORKFLOWS,
-        activities=ACTIVITIES,
+        activities=[
+            governance.resolve_dual_authority,
+            build_evidence_boundary,
+            governance.commit_to_ledger,
+            governance.record_denial,
+        ],
         activity_executor=executor,
     )
 

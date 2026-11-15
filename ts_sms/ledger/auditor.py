@@ -1,25 +1,35 @@
 """Verifies ledger atomicity: contiguous indices, valid hashes, unbroken H_prev linkage."""
 
-from typing import Iterable, Dict, Any
+import hmac
+from typing import Any, Dict, Iterable, Optional
 
 from ts_sms.crypto.hash_derivation import GENESIS_HASH
-from ts_sms.ledger.chain import compute_entry_hash
+from ts_sms.ledger.chain import ALG_HMAC, ENTRY_VERSION, LedgerIntegrityError, compute_entry_hash
+
+__all__ = ["LedgerIntegrityError", "verify_chain"]
 
 
-class LedgerIntegrityError(Exception):
-    pass
+def verify_chain(entries: Iterable[Dict[str, Any]], hmac_key: Optional[str] = None) -> int:
+    """
+    Return the number of verified entries, or raise LedgerIntegrityError.
 
-
-def verify_chain(entries: Iterable[Dict[str, Any]]) -> int:
-    """Return the number of verified entries, or raise LedgerIntegrityError."""
+    With ``hmac_key`` every entry must be HMAC-keyed, so an attacker without
+    the key cannot replace the chain with a recomputed unkeyed one.
+    """
     prev_hash = GENESIS_HASH
     count = 0
+    seen_v2 = False
     for expected_index, entry in enumerate(entries):
         if entry.get("index") != expected_index:
             raise LedgerIntegrityError(f"Non-contiguous index at position {expected_index}")
         if entry.get("h_prev") != prev_hash:
             raise LedgerIntegrityError(f"Broken H_prev linkage at index {expected_index}")
-        if entry.get("entry_hash") != compute_entry_hash(entry):
+        if hmac_key and (entry.get("v") != ENTRY_VERSION or entry.get("alg") != ALG_HMAC):
+            raise LedgerIntegrityError(f"Unkeyed entry at index {expected_index} in an HMAC-keyed ledger")
+        if "v" not in entry and seen_v2:
+            raise LedgerIntegrityError(f"Legacy entry after v2 entries at index {expected_index}")
+        seen_v2 = seen_v2 or "v" in entry
+        if not hmac.compare_digest(str(entry.get("entry_hash")), compute_entry_hash(entry, hmac_key)):
             raise LedgerIntegrityError(f"Entry hash mismatch at index {expected_index}")
         prev_hash = entry["entry_hash"]
         count += 1

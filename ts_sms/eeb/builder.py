@@ -20,6 +20,7 @@ def build_evidence_boundary(auth_context: Dict[str, Any]) -> Dict[str, Any]:
     # Construct strictly parameterized filters (Preventing injection)
     eeb_filters = {
         "must": [
+            {"term": {"tenant_id": org_scope["tenant_id"]}},
             {"term": {"org_node_id": org_scope["id"]}},
             {"term": {"classification": data_scope["classification"]}},
         ],
