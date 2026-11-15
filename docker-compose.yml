@@ -3,7 +3,7 @@ services:
     image: postgres:16
     environment:
       POSTGRES_USER: temporal
-      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:-temporal}
+      POSTGRES_PASSWORD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD in .env}
     volumes:
       - temporal-db:/var/lib/postgresql/data
     healthcheck:
@@ -22,11 +22,11 @@ services:
       DB: postgres12
       DB_PORT: 5432
       POSTGRES_USER: temporal
-      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:-temporal}
+      POSTGRES_PWD: ${TEMPORAL_DB_PASSWORD:?set TEMPORAL_DB_PASSWORD in .env}
       POSTGRES_SEEDS: postgresql
       DEFAULT_NAMESPACE: ${TS_SMS_TEMPORAL_NAMESPACE:-default}
     ports:
-      - "7233:7233"
+      - "127.0.0.1:7233:7233"
     healthcheck:
       test: ["CMD-SHELL", "temporal operator namespace describe -n ${TS_SMS_TEMPORAL_NAMESPACE:-default} --address $$(hostname -i):7233"]
       interval: 5s
@@ -42,7 +42,7 @@ services:
     environment:
       TEMPORAL_ADDRESS: temporal:7233
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     restart: unless-stopped
 
   worker:
@@ -56,8 +56,13 @@ services:
       TS_SMS_TEMPORAL_NAMESPACE: ${TS_SMS_TEMPORAL_NAMESPACE:-default}
       TS_SMS_TASK_QUEUE: ${TS_SMS_TASK_QUEUE:-ts-sms-governance-queue}
       TS_SMS_LOG_LEVEL: ${TS_SMS_LOG_LEVEL:-INFO}
+      TS_SMS_ASSIGNMENTS_PATH: /etc/ts-sms/assignments.json
+      TS_SMS_LEDGER_HMAC_KEY: ${TS_SMS_LEDGER_HMAC_KEY:-}
+      TS_SMS_DIGEST_KEY: ${TS_SMS_DIGEST_KEY:-}
+      TS_SMS_PAYLOAD_KEY: ${TS_SMS_PAYLOAD_KEY:-}
     volumes:
       - ts-sms-ledger:/var/lib/ts-sms
+      - ${TS_SMS_ASSIGNMENTS_FILE:?set TS_SMS_ASSIGNMENTS_FILE in .env}:/etc/ts-sms/assignments.json:ro
     restart: unless-stopped
 
 volumes:

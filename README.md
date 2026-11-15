@@ -4,7 +4,7 @@ Last Updated: July 12, 2026
 
 ## Overview
 The ts_sms (TenantSage State Machine & Security) 
-module is the immutable, mathematically verified core of the TenantSage architecture. 
+module is the governance core of the TenantSage architecture. 
 It acts as the sole arbiter of authority for document-bounded AI retrieval.
 This module is strictly isolated from the application logic, user interface, 
 and standard RAG pipelines. Its singular purpose is to enforce the Dual-Hierarchy (Organizational + Data) constraints, 
@@ -27,11 +27,18 @@ linking cryptographic hashes across all stages of the pipeline.Fail-Closed (Law 
 or failure at any state in the pipeline physically destroys the execution context and triggers a formal failure state (SF_AUTH, SF_EEB, etc.), 
 returning a NULL_HASH for provenance.
 
-Formal VerificationThe logic within ts_sms is backed by rigorous formal methods (see the formal_methods/ directory):
-TLA+ (authoritycontrolplatform.tla, allowderivedcanonical.tla): 
-Proves behavioral properties, such as the unconditional safety of the state machine, strict ledger append ordering, 
-and the integrity of the provenance lineage (parentSource).Alloy (ALLOY_MODEL.als): Proves structural invariants, 
-ensuring that no evidence can exist outside the computed EEB and that cross-tenant assignment is structurally impossible.
+## Implementation Status (v1.0 runtime in this repository)
+
+| Component | Status |
+|---|---|
+| S0 -> S1 -> S3 -> S11/S12 workflow, Law 29 fail-closed, Law 25 genesis | Implemented |
+| DAR (S1) | Implemented against a JSON assignment store (see *Assignment store*); fails closed when the store is missing, malformed, or holds no unique active assignment. Not yet a full ReBAC service. |
+| Ledger | Implemented: ALLOW and DENY entries, optional HMAC keying |
+| S6 Context Governance Layer (CGL) | **Not implemented** (pass-through state); no prompt-inspection policy is defined or enforced |
+| Response Validation Layer (RVL) | **Not implemented** |
+| `formal_methods/` (TLA+/Alloy models) | **Not in this repository**; the docstrings that cite them refer to models that are not shipped or checked here |
+| `contracts/` (Protobuf/JSON schemas) | **Not in this repository**; the dict shapes in code are the de-facto contracts |
+| `.seal` cryptographic release signature | **Not present**; `.seal` describes the target layout only |
 
 Directory Structure Guideinterface/: The sole entry point for the external RAG application (gateway.py).
 
@@ -45,7 +52,7 @@ ledger/: Manages the cryptographic append-only evidence ledger.
 
 laws/: Hard-coded enforcement of the TS-SMS constitution (e.g., Fail-Closed).
 
-contracts/: The Protobuf/JSON schema definitions defining the boundaries between states.
+contracts/: (planned, not present) Protobuf/JSON schema definitions defining the boundaries between states.
 
 crypto/: Core hashing and canonical serialization primitives.
 
@@ -84,7 +91,7 @@ else:
 The control plane ships as the `ts_sms` Python package plus a Temporal worker
 (`ts-sms-worker`) that hosts the `TenantSageStateMachine` workflow and its
 activities (`resolve_dual_authority`, `build_evidence_boundary`,
-`commit_to_ledger`) on the `ts-sms-governance-queue` task queue.
+`commit_to_ledger`, `record_denial`) on the `ts-sms-governance-queue` task queue.
 
 ```
 ts_sms/
@@ -94,11 +101,12 @@ ts_sms/
 ├── interface/cli.py          # ts-sms-execute (submit one request from the shell)
 ├── state_machine/engine.py   # TenantSageStateMachine workflow (S0 -> S12)
 ├── dar/resolver.py           # resolve_dual_authority activity (S1)
+├── dar/assignments.py        # time-bounded assignment store (fail-closed loader)
 ├── eeb/builder.py            # build_evidence_boundary activity (S3)
-├── ledger/chain.py           # commit_to_ledger activity + ProvenanceChain (S11 -> S12)
+├── ledger/chain.py           # commit_to_ledger / record_denial activities + ProvenanceChain
 ├── ledger/auditor.py         # verify_chain (H_prev linkage / hash integrity)
 ├── laws/law_29_fail_closed.py
-└── crypto/                   # canonical serialization + SHA-256 derivation
+└── crypto/                   # canonical JSON, SHA-256/HMAC derivation, payload encryption codec
 ```
 
 ### Install
@@ -119,21 +127,51 @@ pytest                   # unit tests + workflow tests on Temporal's in-process 
 | `TS_SMS_TEMPORAL_TLS` | `false` | Enable server-auth TLS (implied when an API key is set) |
 | `TS_SMS_TEMPORAL_TLS_CLIENT_CERT` / `TS_SMS_TEMPORAL_TLS_CLIENT_KEY` | unset | Paths to an mTLS client cert/key (e.g. Temporal Cloud mTLS) |
 | `TS_SMS_TEMPORAL_API_KEY` | unset | Temporal Cloud API key |
+| `TS_SMS_ASSIGNMENTS_PATH` | unset (**every request is denied**) | JSON assignment store read by the DAR (worker only) |
+| `TS_SMS_LEDGER_HMAC_KEY` | unset | Key ledger entry hashes with HMAC-SHA256; a keyed worker refuses an unkeyed ledger (worker only) |
+| `TS_SMS_DIGEST_KEY` | unset | HMAC key for the query digest (gateway) and principal digest (worker); without it plain SHA-256 is used, which a dictionary attack can invert for short queries |
+| `TS_SMS_PAYLOAD_KEY` | unset | Base64 32-byte AES-256-GCM key; encrypts every Temporal payload. Gateway and worker must use the same key |
 | `TS_SMS_LEDGER_PATH` | `ts_sms_ledger.jsonl` (`/var/lib/ts-sms/ledger.jsonl` in Docker) | Append-only provenance ledger file (worker only) |
 | `TS_SMS_WORKFLOW_TIMEOUT_SECONDS` | `60` | Gateway-side workflow execution timeout; on expiry the gateway returns `SF_GOV` |
 | `TS_SMS_LOG_LEVEL` | `INFO` | Worker log level |
 
 `TenantSageGateway(temporal_target=...)` still accepts an explicit address, which overrides `TS_SMS_TEMPORAL_ADDRESS`.
 
+### Assignment store
+
+The DAR allows a request only when exactly one assignment for the `(user_id, tenant_id)`
+pair is active at the workflow's own clock (`workflow.now()`); the caller cannot supply
+the evaluation time. Organizational and data scope come from that assignment. See
+[`examples/assignments.example.json`](examples/assignments.example.json):
+
+```json
+{"assignments": [{"user_id": "user_123", "tenant_id": "tenant_A", "org_node_id": "child_node_tenant_A",
+  "level": "Child", "role": "analyst", "data_classification": "CONFIDENTIAL",
+  "effective_from": "2026-01-01T00:00:00Z", "effective_to": null}]}
+```
+
+Every field is required (`effective_to: null` means open-ended); times must be ISO-8601 with a timezone.
+
 ### Run locally with Docker Compose
+
+Create a `.env` next to `docker-compose.yml` (compose refuses to start without the first two):
+
+```bash
+TEMPORAL_DB_PASSWORD=<strong random password>
+TS_SMS_ASSIGNMENTS_FILE=./examples/assignments.example.json   # replace with your store
+# optional: TS_SMS_LEDGER_HMAC_KEY / TS_SMS_DIGEST_KEY / TS_SMS_PAYLOAD_KEY
+```
 
 ```bash
 docker compose up -d --build     # Postgres + Temporal (auto-setup) + Temporal UI + ts-sms worker
 docker compose logs -f worker    # wait for "TS-SMS worker polling task queue ..."
 ```
 
-Temporal is exposed on `localhost:7233` and the Temporal UI on http://localhost:8080.
-The ledger lives in the `ts-sms-ledger` volume.
+Temporal (`7233`) and the Temporal UI (`8080`) are bound to `127.0.0.1` only. This dev
+Temporal has no TLS, authentication or namespace authorizer: anything that can reach port
+7233 can start workflows, read history, or poll the task queue with its own worker and
+return a forged result. Do not widen these bindings; in production use a Temporal cluster
+with mTLS/API-key auth. The ledger lives in the `ts-sms-ledger` volume.
 
 ### Run the worker without Docker
 
@@ -173,7 +211,17 @@ asyncio.run(main())
 An `ALLOW` result carries `eeb` (filters + `eeb_hash`) and `provenance`
 (`ledger_index`, `h_prev`, `provenance_hash`, ...). Any failure returns a
 TS-CONTRACT-011 `DENY` with `failure_state` (`SF_AUTH`, `SF_EEB`, `SF_LEDGER`, `SF_GOV`)
-and `NULL_HASH` provenance. Activities retry at most 3 times before Law 29 fires.
+and `NULL_HASH` provenance, and is itself ledgered as a `DENY` entry. Internal error
+text is logged, never returned. Activities retry at most 3 times before Law 29 fires;
+validation and integrity errors (`ValueError`, `AssignmentStoreError`,
+`LedgerIntegrityError`, ...) are not retried.
+
+### What reaches Temporal history
+
+The gateway sends only `user_id`, `tenant_id` and `query_hash` (a digest of the query,
+keyed with `TS_SMS_DIGEST_KEY` when set). Workflow ids are random and carry no identifiers.
+Inputs and results are kept in history for the namespace's configured retention period;
+set `TS_SMS_PAYLOAD_KEY` to encrypt them at rest.
 
 ### Deploy to production
 
@@ -182,8 +230,25 @@ and `NULL_HASH` provenance. Activities retry at most 3 times before Law 29 fires
    `TS_SMS_TEMPORAL_ADDRESS`, `TS_SMS_TEMPORAL_NAMESPACE` and either
    `TS_SMS_TEMPORAL_API_KEY` or the mTLS cert/key variables.
 3. Mount a persistent volume at `/var/lib/ts-sms` for the ledger.
-4. The bundled `docker-compose.yml` can also be used for a single-host deployment;
-   set `TEMPORAL_DB_PASSWORD` and avoid publishing ports 7233/8080 publicly.
+4. Provide the assignment store (`TS_SMS_ASSIGNMENTS_PATH`) and, for production,
+   `TS_SMS_LEDGER_HMAC_KEY`, `TS_SMS_DIGEST_KEY` and `TS_SMS_PAYLOAD_KEY` from a secret manager.
+5. The bundled `docker-compose.yml` is a development stack (unauthenticated Temporal,
+   tag-pinned images); do not use it as a production deployment.
+
+### Ledger integrity limits
+
+- Without `TS_SMS_LEDGER_HMAC_KEY`, anyone with write access to the ledger file can
+  rewrite it and recompute a chain that still verifies. With the key, they cannot without
+  also holding the key, so keep it out of the ledger volume.
+- Neither mode detects deletion of the newest entries (tail truncation). Detecting that
+  requires periodically anchoring the latest `entry_hash` outside the ledger (e.g. a WORM
+  store or transparency log); this is not implemented.
+- Each append is `flock`ed and `fsync`ed, which makes a committed line durable but does
+  not make it atomic. A crash can leave a torn final line; the worker then refuses to
+  append or start. Preserve the file as evidence, and reconcile the torn entry against
+  Temporal workflow outcomes before repairing it manually.
+- Ledgers written before v2 entries (no `v` field) still verify and are extended with v2
+  entries; an unkeyed ledger cannot be converted to HMAC mode in place.
 
 The file ledger uses `flock`, so several worker processes may share it on one host/volume.
 It does not support workers on different hosts writing the same chain; for horizontal
