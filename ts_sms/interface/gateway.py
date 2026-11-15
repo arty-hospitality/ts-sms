@@ -1,4 +1,4 @@
-import time
+import logging
 import uuid
 from datetime import timedelta
 from typing import Any, Dict, Optional
@@ -6,6 +6,9 @@ from typing import Any, Dict, Optional
 from temporalio.client import Client
 
 from ts_sms.config import Settings, connect_client
+from ts_sms.crypto.hash_derivation import keyed_digest
+
+logger = logging.getLogger("ts_sms.gateway")
 
 
 class TenantSageGateway:
@@ -33,12 +36,12 @@ class TenantSageGateway:
         The application is locked out until the state machine reaches S12 (Ledger Commit)
         or hits a Failure State (SF_AUTH, SF_GOV, etc.).
         """
-        # TS-CONTRACT-001: AuthorityRequest
+        # TS-CONTRACT-001: AuthorityRequest. The raw query never enters Temporal;
+        # the evaluation time is set by the workflow, not the caller.
         authority_request = {
             "user_id": user_id,
             "tenant_id": tenant_id,
-            "query": query,
-            "timestamp": time.time(),
+            "query_hash": keyed_digest(str(query), self.settings.digest_key),
         }
 
         try:
@@ -48,19 +51,19 @@ class TenantSageGateway:
             result = await client.execute_workflow(
                 "TenantSageStateMachine",
                 authority_request,
-                id=f"ts-sms-exec-{user_id}-{uuid.uuid4().hex}",
+                id=f"ts-sms-exec-{uuid.uuid4().hex}",
                 task_queue=self.settings.task_queue,
                 execution_timeout=timedelta(seconds=self.settings.workflow_timeout_seconds),
             )
             return result
 
-        except Exception as e:
+        except Exception:
+            logger.warning("TS-SMS governance execution failed", exc_info=True)
             # TS-CONTRACT-011: FailureResponse mapping
             return {
                 "status": "DENY",
                 "failure_state": "SF_GOV",
                 "reason": "Governance Execution Failure",
-                "details": str(e),
                 "eeb": None,
                 "provenance_hash": "NULL_HASH"
             }
