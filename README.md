@@ -48,6 +48,8 @@ A source is eligible only if it passes the temporal window, role visibility, RBA
 is not under legal hold, and matches the resolved classification.
 Filter contract: the top-level `must`/`must_not` of `eeb["filters"]` bound the document/chunk index, while
 `eeb["filters"]["rag_fact"]["must"]` is the complete, self-contained boundary that retrieval adapters apply to fact searches.
+`ts_sms/retrieval/fact_index.py` is the OpenSearch/Elasticsearch adapter for that boundary; its integration test runs with
+`pip install -e '.[dev,integration]'` and `REQUIRE_OPENSEARCH=1 OPENSEARCH_URL=http://localhost:9200 pytest -m integration`.
 Sources and facts are loaded from the JSON store named by `TS_SMS_RAG_STORE_PATH` (see `ts_sms/dar/rag_store.py`);
 with no store configured there are no sources or facts and the flow is unaffected.
 Applications request a precise lookup via the optional `fact_lookup` argument of `TenantSageGateway.execute`

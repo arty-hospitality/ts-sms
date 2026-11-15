@@ -1,27 +1,25 @@
+import json
 import os
 import uuid
 
 import pytest
 
-import ts_sms_dual_authority_resolver as dar
-from ts_sms_evidence_enforcement_boundary import build_evidence_boundary
-from ts_sms_fact_index_adapter import FACT_INDEX_MAPPING, search_facts
+from tests.test_components import REQUEST
+from tests.test_rag_fact import SOURCE
+from ts_sms.dar.resolver import resolve_dual_authority
+from ts_sms.eeb.builder import build_evidence_boundary
+from ts_sms.retrieval.fact_index import FACT_INDEX_MAPPING, search_facts
 
 opensearchpy = pytest.importorskip("opensearchpy")
 
 pytestmark = pytest.mark.integration
 
 OPENSEARCH_URL = os.environ.get("OPENSEARCH_URL", "http://localhost:9200")
-REQUEST = {"user_id": "user_1", "tenant_id": "tenant_A", "timestamp": 100}
-GOVERNED = dict(
-    rbac_ledger_confirmed=True, visible_roles=["supervisor"], effective_from=50, effective_to=None,
-    retention_expiry=500, legal_hold=False, classification="CONFIDENTIAL",
-)
 SOURCES = {
-    "src_ok": dict(GOVERNED),
-    "src_legal_hold": dict(GOVERNED, legal_hold=True),
-    "src_expired": dict(GOVERNED, retention_expiry=90),
-    "src_wrong_role": dict(GOVERNED, visible_roles=["staff"]),
+    "src_ok": {},
+    "src_legal_hold": {"legal_hold": True},
+    "src_expired": {"retention_expiry": "2026-01-02T00:00:00Z"},
+    "src_wrong_role": {"visible_roles": ["staff"]},
 }
 FACTS = [
     {"rag_fact_id": "f_ok_threshold", "rag_source_id": "src_ok", "fact_type": "threshold", "key": "supervisor_limit", "value": {"amount": 500}},
@@ -31,6 +29,7 @@ FACTS = [
     {"rag_fact_id": "f_role", "rag_source_id": "src_wrong_role", "fact_type": "threshold", "key": "supervisor_limit", "value": {"amount": 3}},
     {"rag_fact_id": "f_orphan", "rag_source_id": "src_unknown", "fact_type": "threshold", "key": "supervisor_limit", "value": {"amount": 4}},
 ]
+
 
 @pytest.fixture(scope="module")
 def fact_index():
@@ -49,44 +48,56 @@ def fact_index():
     yield client, index
     client.indices.delete(index=index)
 
-def _eeb(monkeypatch, sources, fact_lookup=None):
-    monkeypatch.setattr(dar, "_resolve_org_scope", lambda u, t: {"id": f"child_node_{t}", "level": "Child", "role": "supervisor"})
-    monkeypatch.setattr(dar, "_load_rag_sources", lambda o: [dict(s, rag_source_id=sid) for sid, s in sources.items()])
-    monkeypatch.setattr(dar, "_load_rag_facts", lambda o: FACTS)
-    auth_context = dar.resolve_dual_authority(REQUEST)
+
+def _eeb(tmp_path, monkeypatch, sources, fact_lookup=None):
+    path = tmp_path / "rag.json"
+    path.write_text(json.dumps({
+        "rag_sources": [{**SOURCE, **override, "rag_source_id": sid} for sid, override in sources.items()],
+        "rag_facts": FACTS,
+    }))
+    monkeypatch.setenv("TS_SMS_RAG_STORE_PATH", str(path))
+    auth_context = resolve_dual_authority(REQUEST)
+    assert auth_context["effect"] == "ALLOW"
     return build_evidence_boundary(auth_context, fact_lookup)
+
 
 def _ids(facts):
     return sorted(f["rag_fact_id"] for f in facts)
 
-def test_only_facts_of_eligible_sources_are_returned(fact_index, monkeypatch):
+
+def test_only_facts_of_eligible_sources_are_returned(fact_index, assignments, tmp_path, monkeypatch):
     client, index = fact_index
-    eeb = _eeb(monkeypatch, SOURCES)
+    eeb = _eeb(tmp_path, monkeypatch, SOURCES)
     assert eeb["filters"]["rag_fact"]["must"] == [{"terms": {"rag_source_id": ["src_ok"]}}]
     assert _ids(search_facts(client, index, eeb)) == ["f_ok_glossary", "f_ok_threshold"]
 
-def test_precise_lookup_narrows_within_eligible_sources(fact_index, monkeypatch):
+
+def test_precise_lookup_narrows_within_eligible_sources(fact_index, assignments, tmp_path, monkeypatch):
     client, index = fact_index
-    eeb = _eeb(monkeypatch, SOURCES, {"fact_type": "threshold", "key": "supervisor_limit"})
+    eeb = _eeb(tmp_path, monkeypatch, SOURCES, {"fact_type": "threshold", "key": "supervisor_limit"})
     assert search_facts(client, index, eeb) == [
         {"rag_fact_id": "f_ok_threshold", "rag_source_id": "src_ok", "fact_type": "threshold",
          "key": "supervisor_limit", "value": {"amount": 500}}
     ]
 
-def test_lookup_cannot_reach_ineligible_source_facts(fact_index, monkeypatch):
+
+def test_lookup_cannot_reach_ineligible_source_facts(fact_index, assignments, tmp_path, monkeypatch):
     client, index = fact_index
-    eeb = _eeb(monkeypatch, {k: v for k, v in SOURCES.items() if k != "src_ok"}, {"fact_type": "threshold", "key": "supervisor_limit"})
+    sources = {k: v for k, v in SOURCES.items() if k != "src_ok"}
+    eeb = _eeb(tmp_path, monkeypatch, sources, {"fact_type": "threshold", "key": "supervisor_limit"})
     assert search_facts(client, index, eeb) == []
 
-def test_empty_eligible_sources_matches_no_facts(fact_index, monkeypatch):
+
+def test_empty_eligible_sources_matches_no_facts(fact_index, assignments, tmp_path, monkeypatch):
     client, index = fact_index
-    eeb = _eeb(monkeypatch, {})
+    eeb = _eeb(tmp_path, monkeypatch, {})
     assert eeb["filters"]["rag_fact"]["must"] == [{"terms": {"rag_source_id": []}}]
     assert search_facts(client, index, eeb) == []
 
-def test_missing_source_confinement_fails_closed(fact_index, monkeypatch):
+
+def test_missing_source_confinement_fails_closed(fact_index, assignments, tmp_path, monkeypatch):
     client, index = fact_index
-    eeb = _eeb(monkeypatch, SOURCES)
+    eeb = _eeb(tmp_path, monkeypatch, SOURCES)
     eeb["filters"]["rag_fact"]["must"] = [{"term": {"key": "supervisor_limit"}}]
     with pytest.raises(ValueError):
         search_facts(client, index, eeb)
