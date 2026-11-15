@@ -1,2 +1,2 @@
 temporalio==1.33.0
-cryptography==46.0.7
+cryptography==50.0.0
