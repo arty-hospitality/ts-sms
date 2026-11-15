@@ -11,6 +11,8 @@ from ts_sms.eeb.builder import build_evidence_boundary
 
 SOURCE = {
     "rag_source_id": "src_ok",
+    "tenant_id": "tenant_A",
+    "org_node_id": "child_node_tenant_A",
     "classification": "CONFIDENTIAL",
     "visible_roles": ["analyst"],
     "rbac_ledger_confirmed": True,
@@ -71,6 +73,7 @@ def test_legacy_field_names_accepted_and_conflicts_rejected(rag_store):
     {"rbac_ledger_confirmed": False}, {"visible_roles": ["supervisor"]},
     {"effective_from": "2027-01-01T00:00:00Z"}, {"effective_to": "2026-02-01T00:00:00Z"},
     {"retention_expiry": "2026-02-01T00:00:00Z"}, {"effective_to": "not-a-time"},
+    {"tenant_id": "tenant_B"}, {"org_node_id": "child_node_other"}, {"visible_roles": "senior_analyst"},
 ])
 def test_denied_source_denies_its_facts(rag_store, override):
     rag_store([{**SOURCE, **override}], [fact("f1", "src_ok")])
@@ -78,7 +81,7 @@ def test_denied_source_denies_its_facts(rag_store, override):
     assert data_scope["eligible_rag_source_ids"] == [] and data_scope["rag_facts"] == []
 
 
-@pytest.mark.parametrize("missing", ["effective_from", "effective_to", "retention_expiry", "legal_hold"])
+@pytest.mark.parametrize("missing", ["tenant_id", "org_node_id", "effective_from", "effective_to", "retention_expiry", "legal_hold"])
 def test_source_missing_governance_field_is_denied(rag_store, missing):
     rag_store([{k: v for k, v in SOURCE.items() if k != missing}], [fact("f1", "src_ok")])
     assert scope()["rag_facts"] == []
@@ -86,7 +89,8 @@ def test_source_missing_governance_field_is_denied(rag_store, missing):
 
 def test_unknown_source_and_invalid_facts_dropped(rag_store):
     rag_store([SOURCE], [fact("f_ok", "src_ok"), fact("f_orphan", "src_missing"), fact("f_bad", "src_ok", "opinion"),
-                         fact("f_nokey", "src_ok", key=""), {**fact("f_nan", "src_ok"), "value": float("nan")}])
+                         fact("f_nokey", "src_ok", key=""), {**fact("f_nan", "src_ok"), "value": float("nan")},
+                         {**fact("f_list_type", "src_ok"), "fact_type": ["threshold"]}])
     assert [f["rag_fact_id"] for f in scope()["rag_facts"]] == ["f_ok"]
 
 

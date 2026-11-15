@@ -45,7 +45,7 @@ Fact-level governance fields from the legacy Family/Child schema (`visibility`, 
 `family_id`/`child_id`) are not authoritative. The EEB confines facts by membership in the set of eligible
 `rag_source` ids, and the fact→source linkage is bound into the governance `context_hash`.
 A source is eligible only if it passes the temporal window, role visibility, RBAC-in-ledger and retention checks,
-is not under legal hold, and matches the resolved classification.
+is not under legal hold, matches the resolved classification, and belongs to the assignment's `tenant_id` and `org_node_id`.
 Filter contract: the top-level `must`/`must_not` of `eeb["filters"]` bound the document/chunk index, while
 `eeb["filters"]["rag_fact"]["must"]` is the complete, self-contained boundary that retrieval adapters apply to fact searches.
 `ts_sms/retrieval/fact_index.py` is the OpenSearch/Elasticsearch adapter for that boundary; its integration test runs with

@@ -64,5 +64,10 @@ def _resolve_org_scope(assignment: Dict[str, Any]) -> Dict[str, Any]:
 
 def _resolve_data_scope(assignment: Dict[str, Any], as_of: float, settings: Settings) -> Dict[str, Any]:
     classification = assignment["data_classification"]
-    rag_scope = resolve_rag_scope(load_rag_store(settings.rag_store_path), assignment["role"], classification, as_of)
+    rag_scope = resolve_rag_scope(load_rag_store(settings.rag_store_path), {
+        "tenant_id": assignment["tenant_id"],
+        "org_node_id": assignment["org_node_id"],
+        "role": assignment["role"],
+        "classification": classification,
+    }, as_of)
     return {"classification": classification, "retention_status": "ACTIVE", **rag_scope}

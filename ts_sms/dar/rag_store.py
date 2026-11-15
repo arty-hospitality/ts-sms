@@ -7,7 +7,8 @@ lineage only and inherit their mother source's decision. Loaded from the JSON fi
 named by ``TS_SMS_RAG_STORE_PATH``::
 
     {"rag_sources": [{
-        "rag_source_id": "src_policy_2026", "classification": "CONFIDENTIAL",
+        "rag_source_id": "src_policy_2026", "tenant_id": "tenant_A", "org_node_id": "child_node_tenant_A",
+        "classification": "CONFIDENTIAL",
         "visible_roles": ["analyst"], "rbac_ledger_confirmed": true, "legal_hold": false,
         "effective_from": "2026-01-01T00:00:00Z", "effective_to": null,
         "retention_expiry": "2031-01-01T00:00:00Z"
@@ -53,14 +54,18 @@ def load_rag_store(path: Optional[str]) -> Dict[str, List[Dict[str, Any]]]:
     return store
 
 
-def rag_source_effect(source: Any, role: str, classification: str, as_of: float) -> str:
+def rag_source_effect(source: Any, scope: Dict[str, str], as_of: float) -> str:
     """Source-level governance decision; any missing or failing attribute is DENY."""
     try:
+        # A source belongs to exactly one tenant and org node; it never crosses the assignment's boundary.
+        if source.get("tenant_id") != scope["tenant_id"] or source.get("org_node_id") != scope["org_node_id"]:
+            return "DENY"
         if source.get("rbac_ledger_confirmed") is not True or source.get("legal_hold") is not False:
             return "DENY"
-        if source.get("classification") != classification:
+        if source.get("classification") != scope["classification"]:
             return "DENY"
-        if role not in (source.get("visible_roles") or ()):
+        visible_roles = source.get("visible_roles")
+        if not isinstance(visible_roles, list) or scope["role"] not in visible_roles:
             return "DENY"
         start = _parse_time(source["effective_from"])
         # effective_to must be declared; an explicit null means open-ended (still bounded by retention_expiry).
@@ -97,7 +102,7 @@ def to_rag_fact(record: Any) -> Optional[Dict[str, Any]]:
     key = record.get("key")
     if not isinstance(fact_id, str) or not fact_id or not isinstance(source_id, str) or not source_id:
         return None
-    if not isinstance(key, str) or not key or fact_type not in RAG_FACT_TYPES:
+    if not isinstance(key, str) or not key or not isinstance(fact_type, str) or fact_type not in RAG_FACT_TYPES:
         return None
     try:
         value = json.loads(json.dumps(record.get("value"), sort_keys=True, allow_nan=False))
@@ -114,14 +119,14 @@ def _canonical_field(record: Dict[str, Any], name: str, legacy_name: str) -> Any
     return value if value is not None else legacy
 
 
-def resolve_rag_scope(store: Dict[str, List[Dict[str, Any]]], role: str, classification: str,
-                      as_of: float) -> Dict[str, Any]:
+def resolve_rag_scope(store: Dict[str, List[Dict[str, Any]]], scope: Dict[str, str], as_of: float) -> Dict[str, Any]:
+    """scope: the assignment's tenant_id, org_node_id, role and classification."""
     source_effects: Dict[str, str] = {}
     for source in store["rag_sources"]:
         sid = source.get("rag_source_id") if isinstance(source, dict) else None
         if not isinstance(sid, str) or not sid:
             continue
-        effect = rag_source_effect(source, role, classification, as_of)
+        effect = rag_source_effect(source, scope, as_of)
         # Duplicate ids fail closed: any DENY for an id wins.
         source_effects[sid] = "DENY" if source_effects.get(sid) == "DENY" else effect
     eligible = sorted(sid for sid, effect in source_effects.items() if effect == "ALLOW")
