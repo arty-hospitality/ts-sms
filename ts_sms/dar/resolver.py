@@ -2,7 +2,14 @@ from typing import Any, Dict
 
 from temporalio import activity
 
+from ts_sms.config import Settings
+from ts_sms.crypto.canonical_serialization import canonical_json
 from ts_sms.crypto.hash_derivation import sha256_hex
+from ts_sms.dar.assignments import find_active_assignment, load_assignments
+
+
+def _deny(reason: str) -> Dict[str, Any]:
+    return {"effect": "DENY", "reason": reason}
 
 
 @activity.defn
@@ -10,22 +17,33 @@ def resolve_dual_authority(request: Dict[str, Any]) -> Dict[str, Any]:
     """
     Executes the Dual-Hierarchy DAR algorithm.
     Resolves both Organizational Scope (Tenant -> Family -> Child)
-    and Data Scope (Document Collections).
+    and Data Scope (Document Collections) from an active, time-bounded
+    assignment. ``evaluated_at`` is set by the workflow, never by the caller.
     """
     user_id = request.get("user_id")
     tenant_id = request.get("tenant_id")
+    as_of = request.get("evaluated_at")
+    if not isinstance(user_id, str) or not user_id or not isinstance(tenant_id, str) or not tenant_id:
+        return _deny("Missing principal or tenant")
+    if isinstance(as_of, bool) or not isinstance(as_of, (int, float)):
+        return _deny("Missing authoritative evaluation time")
 
-    # 1. Org Scope Resolution (ReBAC validation)
-    org_scope = _resolve_org_scope(user_id, tenant_id)
-    if not org_scope:
-        return {"effect": "DENY", "reason": "No Valid Organizational Assignment"}
+    records = load_assignments(Settings().assignments_path)
+    assignment = find_active_assignment(records, user_id, tenant_id, float(as_of))
+    if assignment is None:
+        return _deny("No Valid Organizational Assignment")
 
-    # 2. Data Scope Resolution
-    data_scope = _resolve_data_scope(org_scope)
+    org_scope = _resolve_org_scope(assignment)
+    data_scope = _resolve_data_scope(assignment)
 
-    # 3. Intersection & Hash Derivation (TS-CONTRACT-002)
-    gov_context_string = f"{org_scope['id']}:{data_scope['classification']}:{request['timestamp']}"
-    context_hash = sha256_hex(gov_context_string)
+    # TS-CONTRACT-002: governance context bound to principal, tenant, scopes and evaluation time
+    context_hash = sha256_hex(canonical_json({
+        "user_id": user_id,
+        "tenant_id": tenant_id,
+        "org_scope": org_scope,
+        "data_scope": data_scope,
+        "evaluated_at": as_of,
+    }))
 
     return {
         "effect": "ALLOW",
@@ -35,14 +53,14 @@ def resolve_dual_authority(request: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _resolve_org_scope(user_id: str, tenant_id: str) -> dict:
-    # Stub: Query strictly isolated Relational DB for temporal Assignment bounds
-    # Returns Child node ID if assignment is active.
-    if not user_id or not tenant_id:
-        return {}
-    return {"id": f"child_node_{tenant_id}", "level": "Child"}
+def _resolve_org_scope(assignment: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "id": assignment["org_node_id"],
+        "level": assignment["level"],
+        "tenant_id": assignment["tenant_id"],
+        "role": assignment["role"],
+    }
 
 
-def _resolve_data_scope(org_scope: dict) -> dict:
-    # Stub: Query strictly isolated Data Classification DB
-    return {"classification": "CONFIDENTIAL", "retention_status": "ACTIVE"}
+def _resolve_data_scope(assignment: Dict[str, Any]) -> Dict[str, Any]:
+    return {"classification": assignment["data_classification"], "retention_status": "ACTIVE"}
