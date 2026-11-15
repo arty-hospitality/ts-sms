@@ -9,16 +9,15 @@ from typing import Optional
 from temporalio.client import Client
 from temporalio.worker import Worker
 
+from ts_sms.activities import GovernanceActivities
 from ts_sms.config import Settings, connect_client
-from ts_sms.dar.resolver import resolve_dual_authority
 from ts_sms.eeb.builder import build_evidence_boundary
 from ts_sms.ledger.auditor import verify_chain
-from ts_sms.ledger.chain import commit_to_ledger, get_chain, record_denial
+from ts_sms.ledger.chain import get_chain
 from ts_sms.state_machine.engine import TenantSageStateMachine
 
 logger = logging.getLogger("ts_sms.worker")
 
-ACTIVITIES = [resolve_dual_authority, build_evidence_boundary, commit_to_ledger, record_denial]
 WORKFLOWS = [TenantSageStateMachine]
 
 
@@ -46,11 +45,17 @@ async def connect_with_retry(settings: Settings, attempts: int = 30, delay: floa
 
 
 def build_worker(client: Client, settings: Settings, executor: ThreadPoolExecutor) -> Worker:
+    governance = GovernanceActivities(settings)
     return Worker(
         client,
         task_queue=settings.task_queue,
         workflows=WORKFLOWS,
-        activities=ACTIVITIES,
+        activities=[
+            governance.resolve_dual_authority,
+            build_evidence_boundary,
+            governance.commit_to_ledger,
+            governance.record_denial,
+        ],
         activity_executor=executor,
     )
 

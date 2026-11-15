@@ -6,9 +6,8 @@ from temporalio.common import RetryPolicy
 
 # Activities wrap the DAR/EEB/Ledger modules
 with workflow.unsafe.imports_passed_through():
-    from ts_sms.dar.resolver import resolve_dual_authority
+    from ts_sms.activities import GovernanceActivities
     from ts_sms.eeb.builder import build_evidence_boundary
-    from ts_sms.ledger.chain import commit_to_ledger, record_denial
     from ts_sms.laws.law_29_fail_closed import enforce_fail_closed
 
 # Bounded retries so an activity failure reaches Law 29 instead of retrying forever;
@@ -46,8 +45,8 @@ class TenantSageStateMachine:
 
             # STATE S1: Authority Resolution (Law 10: Authority Precedes Retrieval)
             state = "S1"
-            auth_context = await workflow.execute_activity(
-                resolve_dual_authority,
+            auth_context = await workflow.execute_activity_method(
+                GovernanceActivities.resolve_dual_authority,
                 request,
                 start_to_close_timeout=timedelta(seconds=5),
                 retry_policy=ACTIVITY_RETRY_POLICY,
@@ -70,8 +69,8 @@ class TenantSageStateMachine:
 
             # STATE S11 -> S12: Ledger Commit
             state = "S11"
-            provenance_envelope = await workflow.execute_activity(
-                commit_to_ledger,
+            provenance_envelope = await workflow.execute_activity_method(
+                GovernanceActivities.commit_to_ledger,
                 {"request": request, "eeb": eeb, "auth_context": auth_context},
                 start_to_close_timeout=timedelta(seconds=10),
                 retry_policy=ACTIVITY_RETRY_POLICY,
@@ -93,8 +92,8 @@ class TenantSageStateMachine:
             )
             result = enforce_fail_closed(state, e)
             try:
-                await workflow.execute_activity(
-                    record_denial,
+                await workflow.execute_activity_method(
+                    GovernanceActivities.record_denial,
                     {"request": request or {}, "failure_state": result["failure_state"]},
                     start_to_close_timeout=timedelta(seconds=10),
                     retry_policy=ACTIVITY_RETRY_POLICY,

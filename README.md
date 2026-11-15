@@ -97,6 +97,7 @@ activities (`resolve_dual_authority`, `build_evidence_boundary`,
 ts_sms/
 ├── config.py                 # Environment-driven settings + Temporal client factory
 ├── worker.py                 # ts-sms-worker entrypoint
+├── activities.py             # GovernanceActivities: DAR + ledger activities bound to the worker's Settings
 ├── interface/gateway.py      # TenantSageGateway.execute()
 ├── interface/cli.py          # ts-sms-execute (submit one request from the shell)
 ├── state_machine/engine.py   # TenantSageStateMachine workflow (S0 -> S12)

@@ -1,4 +1,5 @@
 import base64
+import dataclasses
 import os
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -75,6 +76,30 @@ async def test_gateway_executes_s0_to_s12_and_ledgers_denials(settings):
     assert entries[1]["subject_hash"] != entries[2]["subject_hash"]
 
 
+async def test_explicit_worker_settings_reach_activities(tmp_path, monkeypatch, assignments):
+    """Bootstrap and activities share one Settings: keys/paths not present in the environment still apply."""
+    assignments_path = Settings().assignments_path
+    for var in ("TS_SMS_ASSIGNMENTS_PATH", "TS_SMS_LEDGER_HMAC_KEY", "TS_SMS_LEDGER_PATH"):
+        monkeypatch.delenv(var, raising=False)
+    settings = Settings(
+        ledger_path=str(tmp_path / "explicit.jsonl"),
+        task_queue=f"test-{uuid.uuid4().hex}",
+        assignments_path=assignments_path,
+        ledger_hmac_key="worker-only-key",
+    )
+    bootstrap_ledger(settings)
+    async with await WorkflowEnvironment.start_time_skipping() as env:
+        with ThreadPoolExecutor() as executor:
+            async with build_worker(env.client, settings, executor):
+                gateway = _gateway(settings, env.client)
+                assert (await gateway.execute("user_123", "tenant_A", "q"))["status"] == "ALLOW"
+                assert (await gateway.execute("user_123", "tenant_B", "q"))["status"] == "DENY"
+    bootstrap_ledger(settings)  # restart: keyed chain must still verify
+    entries = list(get_chain(settings).entries())
+    assert [e["alg"] for e in entries] == ["hmac-sha256"] * 3
+    assert verify_chain(entries, "worker-only-key") == 3
+
+
 async def test_expired_assignment_is_denied_at_workflow_time(settings, assignments):
     assignments([{**ASSIGNMENT, "effective_to": "2026-01-02T00:00:00Z"}])
     async with await WorkflowEnvironment.start_time_skipping() as env:
@@ -87,7 +112,7 @@ async def test_expired_assignment_is_denied_at_workflow_time(settings, assignmen
 async def test_malformed_assignment_store_fails_closed_without_retry(settings, tmp_path, monkeypatch):
     bad = tmp_path / "bad.json"
     bad.write_text("{not json")
-    monkeypatch.setenv("TS_SMS_ASSIGNMENTS_PATH", str(bad))
+    settings = dataclasses.replace(settings, assignments_path=str(bad))
     async with await WorkflowEnvironment.start_time_skipping() as env:
         with ThreadPoolExecutor() as executor:
             async with build_worker(env.client, settings, executor):

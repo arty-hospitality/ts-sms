@@ -1,6 +1,4 @@
-from typing import Any, Dict
-
-from temporalio import activity
+from typing import Any, Dict, Optional
 
 from ts_sms.config import Settings
 from ts_sms.crypto.canonical_serialization import canonical_json
@@ -12,8 +10,7 @@ def _deny(reason: str) -> Dict[str, Any]:
     return {"effect": "DENY", "reason": reason}
 
 
-@activity.defn
-def resolve_dual_authority(request: Dict[str, Any]) -> Dict[str, Any]:
+def resolve_dual_authority(request: Dict[str, Any], settings: Optional[Settings] = None) -> Dict[str, Any]:
     """
     Executes the Dual-Hierarchy DAR algorithm.
     Resolves both Organizational Scope (Tenant -> Family -> Child)
@@ -28,7 +25,7 @@ def resolve_dual_authority(request: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(as_of, bool) or not isinstance(as_of, (int, float)):
         return _deny("Missing authoritative evaluation time")
 
-    records = load_assignments(Settings().assignments_path)
+    records = load_assignments((settings or Settings()).assignments_path)
     assignment = find_active_assignment(records, user_id, tenant_id, float(as_of))
     if assignment is None:
         return _deny("No Valid Organizational Assignment")

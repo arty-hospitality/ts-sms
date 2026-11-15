@@ -178,6 +178,30 @@ def test_hmac_key_refuses_unkeyed_ledger(tmp_path):
         _append(keyed, "r1")
 
 
+@pytest.mark.parametrize("version", [None, 3])
+def test_hmac_ledger_rejects_forged_legacy_or_unknown_version(tmp_path, version):
+    """Attacker without the key strips/changes ``v`` and recomputes plain hashes."""
+    path = tmp_path / "keyed.jsonl"
+    chain = ProvenanceChain(str(path), hmac_key="k1")
+    chain.ensure_genesis()
+    _append(chain, "r1", "DENY", failure_state="SF_AUTH")
+    entries = [json.loads(line) for line in path.read_text().splitlines()]
+    entries[1]["decision"] = "ALLOW"
+    prev = GENESIS_HASH
+    fields = ("index", "request_id", "timestamp", "h_prev", "eeb_hash", "context_hash", "query_hash")
+    for e in entries:
+        if version is None:
+            del e["v"]
+        else:
+            e["v"] = version
+        e["h_prev"] = prev
+        e["entry_hash"] = sha256_hex(legacy_canonical_json({k: e.get(k) for k in fields}))
+        prev = e["entry_hash"]
+    path.write_text("".join(json.dumps(e) + "\n" for e in entries))
+    with pytest.raises(LedgerIntegrityError):
+        verify_chain(chain.entries(), "k1")
+
+
 def test_hmac_ledger_requires_key_to_verify(tmp_path):
     chain = ProvenanceChain(str(tmp_path / "ledger.jsonl"), hmac_key="k1")
     chain.ensure_genesis()

@@ -45,8 +45,12 @@ class LedgerIntegrityError(ValueError):
 
 
 def compute_entry_hash(entry: Dict[str, Any], hmac_key: Optional[str] = None) -> str:
-    if entry.get("v") is None:
+    if "v" not in entry:
+        if "alg" in entry:
+            raise LedgerIntegrityError("Legacy (v1) entry must not carry an alg field")
         return sha256_hex(legacy_canonical_json({k: entry.get(k) for k in _V1_HASHED_FIELDS}))
+    if entry["v"] != ENTRY_VERSION:
+        raise LedgerIntegrityError(f"Unknown ledger entry version {entry['v']!r}")
     payload = canonical_json({k: entry.get(k) for k in _V2_HASHED_FIELDS})
     if entry.get("alg") == ALG_HMAC:
         if not hmac_key:
@@ -192,8 +196,7 @@ def _query_hash(request: Dict[str, Any]) -> Optional[str]:
     return value if isinstance(value, str) and _HEX64.match(value) else None
 
 
-@activity.defn
-def commit_to_ledger(payload: Dict[str, Any]) -> Dict[str, Any]:
+def commit_to_ledger(payload: Dict[str, Any], settings: Optional[Settings] = None) -> Dict[str, Any]:
     """
     S11 -> S12: bind H_prev to the EEB hash and governance context hash,
     producing the TS-CONTRACT-005 ProvenanceEnvelope.
@@ -211,7 +214,7 @@ def commit_to_ledger(payload: Dict[str, Any]) -> Dict[str, Any]:
     if query_hash is None:
         raise ValueError("AuthorityRequest is missing a valid query_hash")
 
-    settings = Settings()
+    settings = settings or Settings()
     entry = get_chain(settings).append(
         request_id=_request_id(),
         decision="ALLOW",
@@ -233,15 +236,14 @@ def commit_to_ledger(payload: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-@activity.defn
-def record_denial(payload: Dict[str, Any]) -> int:
+def record_denial(payload: Dict[str, Any], settings: Optional[Settings] = None) -> int:
     """
     Law 29 audit trail: append a DENY entry (EEB and context NULL_HASH) for a
     failed run. If an ALLOW entry was written for the same run before the
     workflow failed, this DENY entry supersedes it.
     """
     request = payload.get("request") or {}
-    settings = Settings()
+    settings = settings or Settings()
     entry = get_chain(settings).append(
         request_id=_request_id(),
         decision="DENY",
