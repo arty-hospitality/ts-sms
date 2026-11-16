@@ -57,12 +57,14 @@ services:
       TS_SMS_TASK_QUEUE: ${TS_SMS_TASK_QUEUE:-ts-sms-governance-queue}
       TS_SMS_LOG_LEVEL: ${TS_SMS_LOG_LEVEL:-INFO}
       TS_SMS_ASSIGNMENTS_PATH: /etc/ts-sms/assignments.json
+      TS_SMS_RAG_STORE_PATH: /etc/ts-sms/rag_store.json
       TS_SMS_LEDGER_HMAC_KEY: ${TS_SMS_LEDGER_HMAC_KEY:-}
       TS_SMS_DIGEST_KEY: ${TS_SMS_DIGEST_KEY:-}
       TS_SMS_PAYLOAD_KEY: ${TS_SMS_PAYLOAD_KEY:-}
     volumes:
       - ts-sms-ledger:/var/lib/ts-sms
       - ${TS_SMS_ASSIGNMENTS_FILE:?set TS_SMS_ASSIGNMENTS_FILE in .env}:/etc/ts-sms/assignments.json:ro
+      - ${TS_SMS_RAG_STORE_FILE:-./examples/rag_store.empty.json}:/etc/ts-sms/rag_store.json:ro
     restart: unless-stopped
 
 volumes:

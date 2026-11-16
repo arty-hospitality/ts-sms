@@ -1,0 +1,29 @@
+{
+  "rag_sources": [
+    {
+      "rag_source_id": "src_policy_2026",
+      "tenant_id": "tenant_A",
+      "org_node_id": "child_node_tenant_A",
+      "classification": "CONFIDENTIAL",
+      "visible_roles": [
+        "analyst"
+      ],
+      "rbac_ledger_confirmed": true,
+      "legal_hold": false,
+      "effective_from": "2026-01-01T00:00:00Z",
+      "effective_to": null,
+      "retention_expiry": "2031-01-01T00:00:00Z"
+    }
+  ],
+  "rag_facts": [
+    {
+      "rag_fact_id": "fact_supervisor_limit",
+      "rag_source_id": "src_policy_2026",
+      "fact_type": "threshold",
+      "key": "supervisor_limit",
+      "value": {
+        "amount": 500
+      }
+    }
+  ]
+}
