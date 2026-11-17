@@ -199,7 +199,13 @@ Create a `.env` next to `docker-compose.yml` (compose refuses to start without t
 TEMPORAL_DB_PASSWORD=<strong random password>
 TS_SMS_ASSIGNMENTS_FILE=./examples/assignments.example.json   # replace with your store
 # optional: TS_SMS_LEDGER_HMAC_KEY / TS_SMS_DIGEST_KEY / TS_SMS_PAYLOAD_KEY
+# optional: TS_SMS_RAG_STORE_FILE=./examples/rag_store.example.json   # default: empty store
 ```
+
+The worker reads the RAG store from `TS_SMS_RAG_STORE_FILE`, mounted read-only. Without it,
+compose mounts [`examples/rag_store.empty.json`](examples/rag_store.empty.json), so no
+`rag_source` or `rag_fact` is eligible. [`examples/rag_store.example.json`](examples/rag_store.example.json)
+has one source and fact that match the example assignment.
 
 ```bash
 docker compose up -d --build     # Postgres + Temporal (auto-setup) + Temporal UI + ts-sms worker

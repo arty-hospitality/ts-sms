@@ -131,3 +131,22 @@ def test_eeb_confines_facts_to_eligible_sources_and_lookup(rag_store):
 def test_eeb_rejects_invalid_lookup(assignments, lookup):
     with pytest.raises(ValueError):
         build_evidence_boundary(resolve_dual_authority(REQUEST), lookup)
+
+
+def test_example_rag_stores_load_and_match_example_assignment():
+    import pathlib
+    from datetime import datetime, timezone
+
+    from ts_sms.dar.rag_store import load_rag_store, resolve_rag_scope
+
+    examples = pathlib.Path(__file__).resolve().parent.parent / "examples"
+    scope = {"tenant_id": "tenant_A", "org_node_id": "child_node_tenant_A",
+             "role": "analyst", "classification": "CONFIDENTIAL"}
+    as_of = datetime(2026, 6, 1, tzinfo=timezone.utc).timestamp()
+
+    empty = resolve_rag_scope(load_rag_store(str(examples / "rag_store.empty.json")), scope, as_of)
+    assert empty == {"eligible_rag_source_ids": [], "rag_facts": []}
+
+    example = resolve_rag_scope(load_rag_store(str(examples / "rag_store.example.json")), scope, as_of)
+    assert example["eligible_rag_source_ids"] == ["src_policy_2026"]
+    assert [f["rag_fact_id"] for f in example["rag_facts"]] == ["fact_supervisor_limit"]
