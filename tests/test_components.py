@@ -234,3 +234,38 @@ def test_torn_tail_is_an_integrity_error(tmp_path):
 def test_append_without_genesis_fails(tmp_path):
     with pytest.raises(LedgerIntegrityError):
         _append(ProvenanceChain(str(tmp_path / "l.jsonl")), "r")
+
+
+def test_overlapping_ledger_attempts_commit_once(tmp_path, monkeypatch):
+    """A timed-out attempt 1 that resumes after its retry committed must not append again."""
+    import dataclasses
+
+    from temporalio.testing import ActivityEnvironment
+
+    from ts_sms.config import Settings
+    from ts_sms.ledger.chain import commit_to_ledger, record_denial
+
+    monkeypatch.setenv("TS_SMS_LEDGER_PATH", str(tmp_path / "ledger.jsonl"))
+    settings = Settings()
+    chain = ProvenanceChain(settings.ledger_path)
+    chain.ensure_genesis()
+    request = {"user_id": "u", "tenant_id": "t", "query_hash": "a" * 64}
+    payload = {
+        "request": request,
+        "eeb": {"eeb_hash": "e" * 64, "auth_context_hash": "c" * 64},
+        "auth_context": {"context_hash": "c" * 64},
+    }
+
+    def run(fn, arg, attempt):
+        env = ActivityEnvironment()
+        env.info = dataclasses.replace(env.info, attempt=attempt)
+        return env.run(fn, arg, settings)
+
+    retry = run(commit_to_ledger, payload, 2)
+    stale = run(commit_to_ledger, payload, 1)
+    assert stale["ledger_index"] == retry["ledger_index"]
+
+    deny_retry = run(record_denial, {"request": request, "failure_state": "SF_CGL"}, 2)
+    deny_stale = run(record_denial, {"request": request, "failure_state": "SF_CGL"}, 1)
+    assert deny_stale == deny_retry
+    assert verify_chain(chain.entries()) == 3
