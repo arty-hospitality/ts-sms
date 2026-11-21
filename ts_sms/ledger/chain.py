@@ -201,8 +201,9 @@ def commit_to_ledger(payload: Dict[str, Any], settings: Optional[Settings] = Non
     S11 -> S12: bind H_prev to the EEB hash and governance context hash,
     producing the TS-CONTRACT-005 ProvenanceEnvelope.
 
-    Idempotent per workflow run: a retried attempt returns the entry already
-    written by an earlier attempt instead of appending a duplicate.
+    Idempotent per workflow run: every attempt checks for an entry already
+    written for this run, so a retry and a timed-out attempt that is still
+    running cannot both append.
     """
     eeb = payload["eeb"]
     auth_context = payload["auth_context"]
@@ -222,7 +223,7 @@ def commit_to_ledger(payload: Dict[str, Any], settings: Optional[Settings] = Non
         context_hash=auth_context["context_hash"],
         query_hash=query_hash,
         subject_hash=subject_digest(request.get("user_id"), request.get("tenant_id"), settings.digest_key),
-        dedupe=activity.info().attempt > 1,
+        dedupe=True,
     )
 
     return {
@@ -252,6 +253,6 @@ def record_denial(payload: Dict[str, Any], settings: Optional[Settings] = None) 
         context_hash=NULL_HASH,
         query_hash=_query_hash(request) or NULL_HASH,
         subject_hash=subject_digest(request.get("user_id"), request.get("tenant_id"), settings.digest_key),
-        dedupe=activity.info().attempt > 1,
+        dedupe=True,
     )
     return entry["index"]
